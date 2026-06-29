@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>360° バスルーム ビューワー</title>
+
+  <!-- Pannellum 360° viewer -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pannellum/2.5.6/pannellum.css"/>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pannellum/2.5.6/pannellum.js"></script>
+
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #0f0f0f;
+      color: #e8e8e8;
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ヘッダー */
+    header {
+      padding: 18px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid #2a2a2a;
+      background: #0f0f0f;
+      z-index: 10;
+    }
+
+    .logo {
+      font-size: 13px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: #888;
+      font-weight: 400;
+    }
+
+    .logo span {
+      color: #c8b89a;
+    }
+
+    .badge {
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #555;
+      border: 1px solid #2a2a2a;
+      padding: 4px 10px;
+      border-radius: 2px;
+    }
+
+    /* タイトルセクション */
+    .title-section {
+      padding: 28px 32px 20px;
+      background: #0f0f0f;
+    }
+
+    .room-label {
+      font-size: 11px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: #c8b89a;
+      margin-bottom: 8px;
+    }
+
+    h1 {
+      font-size: 22px;
+      font-weight: 300;
+      letter-spacing: 0.05em;
+      color: #e8e8e8;
+    }
+
+    .subtitle {
+      font-size: 12px;
+      color: #555;
+      margin-top: 6px;
+      letter-spacing: 0.05em;
+    }
+
+    /* ビューワーコンテナ */
+    .viewer-wrapper {
+      flex: 1;
+      position: relative;
+      background: #1a1a1a;
+    }
+
+    #panorama {
+      width: 100%;
+      height: 72vh;
+    }
+
+    /* 操作ヒント */
+    .hint-bar {
+      background: #0f0f0f;
+      border-top: 1px solid #1e1e1e;
+      padding: 14px 32px;
+      display: flex;
+      gap: 32px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .hint-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: #555;
+      letter-spacing: 0.05em;
+    }
+
+    .hint-icon {
+      width: 22px;
+      height: 22px;
+      border: 1px solid #333;
+      border-radius: 3px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      color: #777;
+      flex-shrink: 0;
+    }
+
+    /* フッター */
+    footer {
+      padding: 14px 32px;
+      border-top: 1px solid #1e1e1e;
+      background: #0a0a0a;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .footer-note {
+      font-size: 11px;
+      color: #333;
+      letter-spacing: 0.05em;
+    }
+
+    .fullscreen-btn {
+      background: none;
+      border: 1px solid #333;
+      color: #666;
+      padding: 6px 14px;
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      cursor: pointer;
+      border-radius: 2px;
+      transition: all 0.2s;
+    }
+
+    .fullscreen-btn:hover {
+      border-color: #c8b89a;
+      color: #c8b89a;
+    }
+
+    /* Pannellum のUIカスタマイズ */
+    .pnlm-ui .pnlm-about-msg {
+      display: none !important;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="logo">CG <span>Visualization</span></div>
+    <div class="badge">360° Preview</div>
+  </header>
+
+  <div class="title-section">
+    <div class="room-label">Interior</div>
+    <h1>Bathroom</h1>
+    <div class="subtitle">ドラッグ・スワイプで視点を自由に動かせます</div>
+  </div>
+
+  <div class="viewer-wrapper">
+    <div id="panorama"></div>
+  </div>
+
+  <div class="hint-bar">
+    <div class="hint-item">
+      <div class="hint-icon">⬡</div>
+      <span>ドラッグで回転</span>
+    </div>
+    <div class="hint-item">
+      <div class="hint-icon">⊕</div>
+      <span>スクロールでズーム</span>
+    </div>
+    <div class="hint-item">
+      <div class="hint-icon">↔</div>
+      <span>スマホはスワイプOK</span>
+    </div>
+    <div class="hint-item">
+      <div class="hint-icon">⛶</div>
+      <span>右下でフルスクリーン</span>
+    </div>
+  </div>
+
+  <footer>
+    <div class="footer-note">© KEWBU.Inc — 閲覧専用</div>
+    <button class="fullscreen-btn" onclick="toggleFullscreen()">Fullscreen</button>
+  </footer>
+
+  <script>
+    // Google Drive ファイルID → 直接表示URL
+    const fileId = '11irEfTsQx8iPD2vdHCm5nT0Yg4Ov7iWP';
+    const imageUrl = `https://drive.google.com/uc?export=view&id=${fileId}`;
+
+    // Pannellum 初期化
+    pannellum.viewer('panorama', {
+      type: 'equirectangular',
+      panorama: imageUrl,
+      autoLoad: true,
+      autoRotate: -2,          // ゆっくり自動回転
+      autoRotateInactivityDelay: 3000,
+      compass: false,
+      showFullscreenCtrl: true,
+      showZoomCtrl: true,
+      mouseZoom: true,
+      hfov: 100,               // 水平視野角
+      minHfov: 50,
+      maxHfov: 120,
+      pitch: 0,
+      yaw: 0,
+      strings: {
+        loadButtonLabel: '▶ クリックして360°を表示',
+        loadingLabel: '読み込み中...',
+        bylineLabel: '',
+      },
+      uiText: {
+        loadButtonLabel: '▶ クリックして360°を表示',
+        loadingLabel: '読み込み中...',
+      }
+    });
+
+    // フルスクリーン切替
+    function toggleFullscreen() {
+      const el = document.getElementById('panorama');
+      if (!document.fullscreenElement) {
+        el.requestFullscreen().catch(err => {
+          alert('フルスクリーンに対応していません: ' + err.message);
+        });
+      } else {
+        document.exitFullscreen();
+      }
+    }
+  </script>
+
+</body>
+</html>
