@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>360° Bathroom</title>
+
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pannellum/2.5.6/pannellum.css"/>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pannellum/2.5.6/pannellum.js"></script>
+
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+
+    #panorama {
+      width: 100%;
+      height: 100%;
+    }
+
+    .pnlm-ui .pnlm-about-msg {
+      display: none !important;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="panorama"></div>
+
+  <script>
+    const imageUrl = '0703_1030.jpg';
+
+    pannellum.viewer('panorama', {
+      type: 'equirectangular',
+      panorama: imageUrl,
+      autoLoad: true,
+      autoRotate: -2,
+      autoRotateInactivityDelay: 3000,
+      compass: false,
+      showFullscreenCtrl: true,
+      showZoomCtrl: true,
+      mouseZoom: true,
+      hfov: 100,
+      minHfov: 50,
+      maxHfov: 120,
+      pitch: 0,
+      yaw: 0,
+      strings: {
+        loadButtonLabel: '▶ クリックして360°を表示',
+        loadingLabel: '読み込み中...',
+        bylineLabel: '',
+      }
+    });
+  </script>
+
+</body>
+</html>
