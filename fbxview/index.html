@@ -57,10 +57,20 @@
   #panel button.active{ background: var(--accent); color: #0d1114; }
 
   #hint{
-    position:fixed; bottom:20px; right:20px;
+    position:fixed; bottom:44px; right:20px;
     font-size: 12px; color: var(--text-dim);
     pointer-events:none;
   }
+
+  #brand{
+    position:fixed; bottom:18px; right:20px;
+    font-size: 11.5px; letter-spacing: 0.03em;
+    color: var(--text-dim);
+    text-decoration: none;
+    opacity: 0.75;
+    transition: opacity 0.15s ease, color 0.15s ease;
+  }
+  #brand:hover{ opacity: 1; color: var(--accent-hover); }
 
   #loading{
     position:fixed; inset:0;
@@ -81,6 +91,15 @@
     background: var(--bg); z-index: 11;
     font-size: 13px; color: var(--text-dim); text-align:center; padding: 24px;
   }
+
+  #debug{
+    position:fixed; top:20px; right:20px;
+    font-size: 11.5px; line-height: 1.6; color: var(--text-dim);
+    background: var(--panel); border: 1px solid var(--panel-border);
+    border-radius: 8px; padding: 10px 12px;
+    white-space: pre; pointer-events:none;
+  }
+  #debug:empty{ display:none; }
 </style>
 </head>
 <body>
@@ -97,6 +116,10 @@
 </div>
 
 <div id="hint">ドラッグ: 回転　スクロール: ズーム　右ドラッグ: 平行移動</div>
+
+<a id="brand" href="https://www.kewbu.com/" target="_blank" rel="noopener">KEWBU.Inc</a>
+
+<div id="debug"></div>
 
 <div id="loading">
   <div id="loading-label">モデルを読み込み中... 0%</div>
@@ -118,6 +141,7 @@
 import * as THREE from 'three';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 // ---- config ----
 const MODEL_URL = 'awaji_model-0915.fbx';
@@ -135,6 +159,11 @@ wrap.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x14181c);
 scene.fog = new THREE.Fog(0x14181c, 50, 400);
+
+// PBR-style materials (metalness/roughness workflow) need an environment map
+// to reflect, otherwise they render near-black under only direct lights.
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 10000);
 camera.position.set(8, 6, 12);
@@ -173,24 +202,49 @@ const barFill = document.getElementById('bar-fill');
 const errorEl = document.getElementById('error');
 
 const loader = new FBXLoader();
+const debugEl = document.getElementById('debug');
+
 loader.load(
   MODEL_URL,
   (object) => {
     modelRoot = object;
 
+    let meshCount = 0;
     object.traverse((child) => {
       if (child.isMesh) {
+        meshCount++;
         child.castShadow = false;
         child.receiveShadow = false;
         if (child.material) {
           const mats = Array.isArray(child.material) ? child.material : [child.material];
-          mats.forEach((m) => { if ('metalness' in m) m.metalness = Math.min(m.metalness ?? 0.3, 0.6); });
+          mats.forEach((m) => {
+            if (m.map) m.map.colorSpace = THREE.SRGBColorSpace;
+            if (m.emissiveMap) m.emissiveMap.colorSpace = THREE.SRGBColorSpace;
+            m.side = THREE.DoubleSide;
+            m.needsUpdate = true;
+          });
         }
       }
     });
 
     scene.add(object);
-    frameObject(object);
+    const info = frameObject(object);
+
+    // bright outline around the model's bounds — visible even if the
+    // model's own materials fail to render, so we can tell the two
+    // problems apart at a glance.
+    if (info) {
+      const helperBox = new THREE.Box3Helper(info.box, new THREE.Color(0xff5555));
+      scene.add(helperBox);
+    }
+
+    debugEl.textContent =
+      `メッシュ数: ${meshCount}\n` +
+      (info
+        ? `サイズ: ${info.size.x.toFixed(2)} x ${info.size.y.toFixed(2)} x ${info.size.z.toFixed(2)}\n` +
+          `中心: (${info.center.x.toFixed(2)}, ${info.center.y.toFixed(2)}, ${info.center.z.toFixed(2)})`
+        : `境界ボックス: 計算できませんでした`) +
+      (meshCount === 0 ? `\n※ジオメトリが1つも見つかりませんでした` : '');
 
     loadingEl.classList.add('hidden');
     setTimeout(() => { loadingEl.style.display = 'none'; }, 400);
@@ -211,6 +265,12 @@ loader.load(
 
 function frameObject(object) {
   const box = new THREE.Box3().setFromObject(object);
+
+  if (box.isEmpty() || !isFinite(box.min.x) || !isFinite(box.max.x)) {
+    console.warn('FBX bounding box could not be computed; using default view.');
+    return null;
+  }
+
   const size = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
 
@@ -218,7 +278,7 @@ function frameObject(object) {
   const fitDist = maxDim / (2 * Math.tan((Math.PI * camera.fov) / 360));
   const dist = fitDist * 1.6;
 
-  camera.near = maxDim / 1000;
+  camera.near = Math.max(maxDim / 1000, 0.001);
   camera.far = maxDim * 100;
   camera.updateProjectionMatrix();
 
@@ -235,6 +295,8 @@ function frameObject(object) {
 
   defaultCamPos = camera.position.clone();
   defaultTarget = controls.target.clone();
+
+  return { box, size, center };
 }
 
 let defaultCamPos = camera.position.clone();
