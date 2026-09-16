@@ -372,9 +372,20 @@ loader.load(
 
     let meshCount = 0;
     try {
+      // Collect mesh references first, in a plain read-only traversal.
+      // Adding new children (the wireframe overlay) to a node WHILE
+      // Object3D.traverse is still walking down into it makes that node's
+      // own recursive call one frame deeper — across hundreds of meshes in
+      // a nested FBX hierarchy this compounds and can blow the call stack
+      // (RangeError: Maximum call stack size exceeded). Doing the mutation
+      // in a separate flat loop afterwards avoids that entirely.
+      const meshList = [];
       object.traverse((child) => {
-      if (child.isMesh) {
-        meshCount++;
+        if (child.isMesh) meshList.push(child);
+      });
+      meshCount = meshList.length;
+
+      meshList.forEach((child) => {
         child.castShadow = false;
         child.receiveShadow = false;
         // this whole block is cosmetic (materials/wireframe overlay) — if any
@@ -415,7 +426,6 @@ loader.load(
         } catch (err) {
           console.warn('Skipped wireframe/material setup for one mesh:', err);
         }
-      }
       });
     } catch (err) {
       console.warn('Mesh traversal error (continuing with what loaded):', err);
