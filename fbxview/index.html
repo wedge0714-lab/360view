@@ -110,6 +110,9 @@
 
 <div id="panel">
   <button id="btn-reset">視点リセット</button>
+  <button id="btn-front">正面</button>
+  <button id="btn-top">上面</button>
+  <button id="btn-side">側面</button>
   <button id="btn-grid" class="active">グリッド</button>
   <button id="btn-wire">ワイヤーフレーム</button>
   <button id="btn-rotate">自動回転</button>
@@ -228,7 +231,7 @@ loader.load(
     });
 
     scene.add(object);
-    const info = frameObject(object);
+    const info = setupSceneScale(object);
 
     // bright outline around the model's bounds — visible even if the
     // model's own materials fail to render, so we can tell the two
@@ -245,6 +248,8 @@ loader.load(
           `中心: (${info.center.x.toFixed(2)}, ${info.center.y.toFixed(2)}, ${info.center.z.toFixed(2)})`
         : `境界ボックス: 計算できませんでした`) +
       (meshCount === 0 ? `\n※ジオメトリが1つも見つかりませんでした` : '');
+
+    frameToView('iso');
 
     loadingEl.classList.add('hidden');
     setTimeout(() => { loadingEl.style.display = 'none'; }, 400);
@@ -263,58 +268,85 @@ loader.load(
   }
 );
 
-function frameObject(object) {
+// one-time setup: fog / clipping planes / ground grid all scale with the
+// model's own size, since a fixed value that works for a chair looks wrong
+// for a 600m site model (and vice versa).
+function setupSceneScale(object) {
   const box = new THREE.Box3().setFromObject(object);
 
   if (box.isEmpty() || !isFinite(box.min.x) || !isFinite(box.max.x)) {
-    console.warn('FBX bounding box could not be computed; using default view.');
+    console.warn('FBX bounding box could not be computed.');
     return null;
   }
 
   const size = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
-
   const maxDim = Math.max(size.x, size.y, size.z) || 1;
-  const fitDist = maxDim / (2 * Math.tan((Math.PI * camera.fov) / 360));
-  const dist = fitDist * 1.6;
 
   camera.near = Math.max(maxDim / 1000, 0.001);
   camera.far = maxDim * 100;
   camera.updateProjectionMatrix();
 
-  // these were fixed constants sized for small objects — rescale them to
-  // the model's actual scale, or huge models get clipped by fog / zoom limits
   controls.minDistance = Math.max(maxDim / 1000, 0.01);
   controls.maxDistance = Math.max(maxDim * 20, 5000);
   scene.fog.near = maxDim * 0.6;
   scene.fog.far = maxDim * 6;
 
-  camera.position.set(center.x + dist * 0.6, center.y + dist * 0.45, center.z + dist * 0.6);
-  controls.target.copy(center);
-  controls.update();
-
-  // resize grid to match model footprint
   scene.remove(grid);
   const gridSize = Math.max(maxDim * 2, 10);
   grid = new THREE.GridHelper(gridSize, 40, 0x3a4148, 0x24282d);
   grid.position.y = box.min.y;
   scene.add(grid);
 
-  defaultCamPos = camera.position.clone();
-  defaultTarget = controls.target.clone();
-
-  return { box, size, center };
+  return { box, size, center, maxDim };
 }
 
-let defaultCamPos = camera.position.clone();
-let defaultTarget = new THREE.Vector3();
+// camera navigation: always recomputed live from the model's current
+// bounding box, so it can't drift out of sync with a stored value.
+function frameToView(mode) {
+  if (!modelRoot) return;
+  const box = new THREE.Box3().setFromObject(modelRoot);
+  if (box.isEmpty()) return;
+
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const maxDim = Math.max(size.x, size.y, size.z) || 1;
+  const fitDist = (maxDim / (2 * Math.tan((Math.PI * camera.fov) / 360))) * 1.6;
+
+  let pos;
+  let up = new THREE.Vector3(0, 1, 0);
+
+  switch (mode) {
+    case 'front':
+      pos = new THREE.Vector3(center.x, center.y, center.z + fitDist);
+      break;
+    case 'side':
+      pos = new THREE.Vector3(center.x + fitDist, center.y, center.z);
+      break;
+    case 'top':
+      // camera looking straight down needs an up-vector that isn't
+      // parallel to the view direction, or OrbitControls loses the
+      // horizon reference and the view can spin unpredictably.
+      pos = new THREE.Vector3(center.x, center.y + fitDist, center.z);
+      up = new THREE.Vector3(0, 0, -1);
+      break;
+    case 'iso':
+    default:
+      pos = new THREE.Vector3(center.x + fitDist * 0.6, center.y + fitDist * 0.45, center.z + fitDist * 0.6);
+      break;
+  }
+
+  camera.up.copy(up);
+  camera.position.copy(pos);
+  controls.target.copy(center);
+  controls.update();
+}
 
 // ---- UI ----
-document.getElementById('btn-reset').addEventListener('click', () => {
-  camera.position.copy(defaultCamPos);
-  controls.target.copy(defaultTarget);
-  controls.update();
-});
+document.getElementById('btn-reset').addEventListener('click', () => frameToView('iso'));
+document.getElementById('btn-front').addEventListener('click', () => frameToView('front'));
+document.getElementById('btn-top').addEventListener('click', () => frameToView('top'));
+document.getElementById('btn-side').addEventListener('click', () => frameToView('side'));
 
 document.getElementById('btn-grid').addEventListener('click', (e) => {
   grid.visible = !grid.visible;
