@@ -144,6 +144,11 @@
   .fov-row{ display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
   .fov-row span{ color: var(--text); }
   #fov-slider{ width:100%; accent-color: var(--accent); }
+  #wire-width{ width:100%; accent-color: var(--accent); }
+  #wire-color{
+    width: 32px; height: 22px; padding:0; border:none; border-radius:5px;
+    background: none; cursor:pointer;
+  }
 </style>
 </head>
 <body>
@@ -195,6 +200,17 @@
     <span id="fov-value">45°</span>
   </div>
   <input id="fov-slider" type="range" min="15" max="100" value="45" step="1">
+
+  <div class="adjust-divider"></div>
+  <div class="fov-row">
+    <span class="adjust-title" style="margin-bottom:0;">ワイヤーフレーム色</span>
+    <input id="wire-color" type="color" value="#ff5555">
+  </div>
+  <div class="fov-row">
+    <span>太さ</span>
+    <span id="wire-width-value">2px</span>
+  </div>
+  <input id="wire-width" type="range" min="1" max="6" value="2" step="0.5">
 </div>
 
 <div id="hint">ドラッグ: 回転　スクロール: ズーム　右ドラッグ: 平行移動</div>
@@ -224,6 +240,9 @@ import * as THREE from 'three';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
+import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 
 // ---- config ----
 const MODEL_URL = 'awaji_model-0915.fbx';
@@ -301,7 +320,21 @@ function createMatcapTexture() {
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
-const matcapMaterial = new THREE.MeshMatcapMaterial({ matcap: createMatcapTexture(), side: THREE.DoubleSide });
+const matcapMaterial = new THREE.MeshMatcapMaterial({
+  matcap: createMatcapTexture(),
+  side: THREE.DoubleSide,
+  polygonOffset: true,
+  polygonOffsetFactor: 1,
+  polygonOffsetUnits: 1,
+});
+
+// ---- wireframe overlay: drawn as a separate "fat line" mesh on top of the
+// solid surface, rather than switching material.wireframe (which hides the
+// shaded faces entirely). One shared material means the color/width
+// controls update every mesh's overlay at once. ----
+const wireMaterial = new LineMaterial({ color: 0xff5555, linewidth: 2, transparent: true });
+wireMaterial.resolution.set(window.innerWidth, window.innerHeight);
+const wireOverlays = [];
 
 function setRenderMode(mode) {
   if (!modelRoot) return;
@@ -349,8 +382,25 @@ loader.load(
             if (m.map) m.map.colorSpace = THREE.SRGBColorSpace;
             if (m.emissiveMap) m.emissiveMap.colorSpace = THREE.SRGBColorSpace;
             m.side = THREE.DoubleSide;
+            // pushes the filled faces back very slightly so the wireframe
+            // overlay (drawn at the true surface depth) doesn't flicker
+            // against them (z-fighting)
+            m.polygonOffset = true;
+            m.polygonOffsetFactor = 1;
+            m.polygonOffsetUnits = 1;
             m.needsUpdate = true;
           });
+        }
+
+        if (child.geometry) {
+          const wireGeom = new THREE.WireframeGeometry(child.geometry);
+          const lsg = new LineSegmentsGeometry();
+          lsg.setPositions(wireGeom.attributes.position.array);
+          const overlay = new LineSegments2(lsg, wireMaterial);
+          overlay.visible = wireframeOn;
+          child.add(overlay);
+          wireOverlays.push(overlay);
+          wireGeom.dispose();
         }
       }
     });
@@ -510,14 +560,7 @@ document.getElementById('btn-grid').addEventListener('click', (e) => {
 document.getElementById('btn-wire').addEventListener('click', (e) => {
   wireframeOn = !wireframeOn;
   e.target.classList.toggle('active', wireframeOn);
-  if (modelRoot) {
-    modelRoot.traverse((child) => {
-      if (child.isMesh && child.material) {
-        const mats = Array.isArray(child.material) ? child.material : [child.material];
-        mats.forEach((m) => { m.wireframe = wireframeOn; });
-      }
-    });
-  }
+  wireOverlays.forEach((o) => { o.visible = wireframeOn; });
 });
 
 document.getElementById('btn-pivot').addEventListener('click', (e) => {
@@ -549,10 +592,22 @@ fovSlider.addEventListener('input', (e) => {
   fovValue.textContent = val + '°';
 });
 
+document.getElementById('wire-color').addEventListener('input', (e) => {
+  wireMaterial.color.set(e.target.value);
+});
+
+const wireWidthValue = document.getElementById('wire-width-value');
+document.getElementById('wire-width').addEventListener('input', (e) => {
+  const val = parseFloat(e.target.value);
+  wireMaterial.linewidth = val;
+  wireWidthValue.textContent = val + 'px';
+});
+
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  wireMaterial.resolution.set(window.innerWidth, window.innerHeight);
 });
 
 // ---- render loop ----
