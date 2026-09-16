@@ -371,39 +371,55 @@ loader.load(
     modelRoot = object;
 
     let meshCount = 0;
-    object.traverse((child) => {
+    try {
+      object.traverse((child) => {
       if (child.isMesh) {
         meshCount++;
         child.castShadow = false;
         child.receiveShadow = false;
-        if (child.material) {
-          const mats = Array.isArray(child.material) ? child.material : [child.material];
-          mats.forEach((m) => {
-            if (m.map) m.map.colorSpace = THREE.SRGBColorSpace;
-            if (m.emissiveMap) m.emissiveMap.colorSpace = THREE.SRGBColorSpace;
-            m.side = THREE.DoubleSide;
-            // pushes the filled faces back very slightly so the wireframe
-            // overlay (drawn at the true surface depth) doesn't flicker
-            // against them (z-fighting)
-            m.polygonOffset = true;
-            m.polygonOffsetFactor = 1;
-            m.polygonOffsetUnits = 1;
-            m.needsUpdate = true;
-          });
-        }
+        // this whole block is cosmetic (materials/wireframe overlay) — if any
+        // one mesh's data trips it up, skip that mesh rather than losing the
+        // entire model (a thrown error here gets funneled into the loader's
+        // onError, which shows the generic "failed to load" message even
+        // though the FBX itself parsed fine).
+        try {
+          if (child.material) {
+            const mats = Array.isArray(child.material) ? child.material : [child.material];
+            mats.forEach((m) => {
+              if (m.map) m.map.colorSpace = THREE.SRGBColorSpace;
+              if (m.emissiveMap) m.emissiveMap.colorSpace = THREE.SRGBColorSpace;
+              m.side = THREE.DoubleSide;
+              // pushes the filled faces back very slightly so the wireframe
+              // overlay (drawn at the true surface depth) doesn't flicker
+              // against them (z-fighting)
+              m.polygonOffset = true;
+              m.polygonOffsetFactor = 1;
+              m.polygonOffsetUnits = 1;
+              m.needsUpdate = true;
+            });
+          }
 
-        if (child.geometry) {
-          const wireGeom = new THREE.WireframeGeometry(child.geometry);
-          const lsg = new LineSegmentsGeometry();
-          lsg.setPositions(wireGeom.attributes.position.array);
-          const overlay = new LineSegments2(lsg, wireMaterial);
-          overlay.visible = wireframeOn;
-          child.add(overlay);
-          wireOverlays.push(overlay);
-          wireGeom.dispose();
+          if (child.geometry && child.geometry.attributes && child.geometry.attributes.position) {
+            const wireGeom = new THREE.WireframeGeometry(child.geometry);
+            const posArray = wireGeom.attributes.position.array;
+            if (posArray && posArray.length >= 6) {
+              const lsg = new LineSegmentsGeometry();
+              lsg.setPositions(posArray);
+              const overlay = new LineSegments2(lsg, wireMaterial);
+              overlay.visible = wireframeOn;
+              child.add(overlay);
+              wireOverlays.push(overlay);
+            }
+            wireGeom.dispose();
+          }
+        } catch (err) {
+          console.warn('Skipped wireframe/material setup for one mesh:', err);
         }
       }
-    });
+      });
+    } catch (err) {
+      console.warn('Mesh traversal error (continuing with what loaded):', err);
+    }
 
     scene.add(object);
 
@@ -413,25 +429,32 @@ loader.load(
     // that origin, flinging the geometry far off-screen. Wrapping it in a
     // pivot centered on its own bounding box makes rotation happen around
     // the model itself.
-    const rawBox = new THREE.Box3().setFromObject(object);
-    const rawCenter = new THREE.Vector3();
-    if (!rawBox.isEmpty() && isFinite(rawBox.min.x)) rawBox.getCenter(rawCenter);
+    let info = null;
+    try {
+      const rawBox = new THREE.Box3().setFromObject(object);
+      const rawCenter = new THREE.Vector3();
+      if (!rawBox.isEmpty() && isFinite(rawBox.min.x)) rawBox.getCenter(rawCenter);
 
-    scene.remove(object);
-    object.position.sub(rawCenter);
-    pivot = new THREE.Group();
-    pivot.position.copy(rawCenter);
-    pivot.add(object);
-    scene.add(pivot);
+      scene.remove(object);
+      object.position.sub(rawCenter);
+      pivot = new THREE.Group();
+      pivot.position.copy(rawCenter);
+      pivot.add(object);
+      scene.add(pivot);
 
-    const info = setupSceneScale(pivot);
+      info = setupSceneScale(pivot);
 
-    // bright outline around the model's bounds — visible even if the
-    // model's own materials fail to render, so we can tell the two
-    // problems apart at a glance.
-    if (info) {
-      const helperBox = new THREE.Box3Helper(info.box, new THREE.Color(0xff5555));
-      scene.add(helperBox);
+      // bright outline around the model's bounds — visible even if the
+      // model's own materials fail to render, so we can tell the two
+      // problems apart at a glance.
+      if (info) {
+        const helperBox = new THREE.Box3Helper(info.box, new THREE.Color(0xff5555));
+        scene.add(helperBox);
+      }
+
+      frameToView('front');
+    } catch (err) {
+      console.warn('Framing/pivot setup error:', err);
     }
 
     debugEl.textContent =
@@ -441,8 +464,6 @@ loader.load(
           `中心: (${info.center.x.toFixed(2)}, ${info.center.y.toFixed(2)}, ${info.center.z.toFixed(2)})`
         : `境界ボックス: 計算できませんでした`) +
       (meshCount === 0 ? `\n※ジオメトリが1つも見つかりませんでした` : '');
-
-    frameToView('front');
 
     loadingEl.classList.add('hidden');
     setTimeout(() => { loadingEl.style.display = 'none'; }, 400);
