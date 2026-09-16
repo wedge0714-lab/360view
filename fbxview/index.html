@@ -116,6 +116,8 @@
   <button id="btn-grid" class="active">グリッド</button>
   <button id="btn-wire">ワイヤーフレーム</button>
   <button id="btn-rotate">自動回転</button>
+  <button id="btn-spin-l">モデル回転 ⟲</button>
+  <button id="btn-spin-r">モデル回転 ⟳</button>
 </div>
 
 <div id="hint">ドラッグ: 回転　スクロール: ズーム　右ドラッグ: 平行移動</div>
@@ -176,6 +178,7 @@ controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 controls.minDistance = 0.1;
 controls.maxDistance = 5000;
+controls.autoRotateSpeed = 1.2;
 
 // ---- lighting ----
 const hemi = new THREE.HemisphereLight(0xdfe8f0, 0x1a1d20, 1.1);
@@ -195,7 +198,7 @@ scene.add(grid);
 
 // ---- state ----
 let modelRoot = null;
-let autoRotate = false;
+let pivot = null;
 let wireframeOn = false;
 
 // ---- load ----
@@ -231,7 +234,25 @@ loader.load(
     });
 
     scene.add(object);
-    const info = setupSceneScale(object);
+
+    // FBX root objects are usually at world origin, but the mesh data
+    // inside can sit anywhere (this model's vertices are ~1,000,000 units
+    // from the origin). Rotating "object" directly would spin it around
+    // that origin, flinging the geometry far off-screen. Wrapping it in a
+    // pivot centered on its own bounding box makes rotation happen around
+    // the model itself.
+    const rawBox = new THREE.Box3().setFromObject(object);
+    const rawCenter = new THREE.Vector3();
+    if (!rawBox.isEmpty() && isFinite(rawBox.min.x)) rawBox.getCenter(rawCenter);
+
+    scene.remove(object);
+    object.position.sub(rawCenter);
+    pivot = new THREE.Group();
+    pivot.position.copy(rawCenter);
+    pivot.add(object);
+    scene.add(pivot);
+
+    const info = setupSceneScale(pivot);
 
     // bright outline around the model's bounds — visible even if the
     // model's own materials fail to render, so we can tell the two
@@ -304,8 +325,8 @@ function setupSceneScale(object) {
 // camera navigation: always recomputed live from the model's current
 // bounding box, so it can't drift out of sync with a stored value.
 function frameToView(mode) {
-  if (!modelRoot) return;
-  const box = new THREE.Box3().setFromObject(modelRoot);
+  if (!pivot) return;
+  const box = new THREE.Box3().setFromObject(pivot);
   if (box.isEmpty()) return;
 
   const size = box.getSize(new THREE.Vector3());
@@ -314,7 +335,6 @@ function frameToView(mode) {
   const fitDist = (maxDim / (2 * Math.tan((Math.PI * camera.fov) / 360))) * 1.6;
 
   let pos;
-  let up = new THREE.Vector3(0, 1, 0);
 
   switch (mode) {
     case 'front':
@@ -324,11 +344,12 @@ function frameToView(mode) {
       pos = new THREE.Vector3(center.x + fitDist, center.y, center.z);
       break;
     case 'top':
-      // camera looking straight down needs an up-vector that isn't
-      // parallel to the view direction, or OrbitControls loses the
-      // horizon reference and the view can spin unpredictably.
-      pos = new THREE.Vector3(center.x, center.y + fitDist, center.z);
-      up = new THREE.Vector3(0, 0, -1);
+      // OrbitControls fixes its internal up-vector basis once, at
+      // construction — it does not track later changes to camera.up. A
+      // camera placed exactly on the up-axis is also a singular case for
+      // its orbit math. A tiny horizontal nudge keeps camera.up untouched
+      // (so dragging keeps working afterwards) while avoiding that case.
+      pos = new THREE.Vector3(center.x + fitDist * 0.001, center.y + fitDist, center.z);
       break;
     case 'iso':
     default:
@@ -336,7 +357,6 @@ function frameToView(mode) {
       break;
   }
 
-  camera.up.copy(up);
   camera.position.copy(pos);
   controls.target.copy(center);
   controls.update();
@@ -367,8 +387,16 @@ document.getElementById('btn-wire').addEventListener('click', (e) => {
 });
 
 document.getElementById('btn-rotate').addEventListener('click', (e) => {
-  autoRotate = !autoRotate;
-  e.target.classList.toggle('active', autoRotate);
+  controls.autoRotate = !controls.autoRotate;
+  e.target.classList.toggle('active', controls.autoRotate);
+});
+
+document.getElementById('btn-spin-l').addEventListener('click', () => {
+  if (pivot) pivot.rotation.y += Math.PI / 2;
+});
+
+document.getElementById('btn-spin-r').addEventListener('click', () => {
+  if (pivot) pivot.rotation.y -= Math.PI / 2;
 });
 
 window.addEventListener('resize', () => {
@@ -380,9 +408,6 @@ window.addEventListener('resize', () => {
 // ---- render loop ----
 function animate() {
   requestAnimationFrame(animate);
-  if (autoRotate && modelRoot) {
-    modelRoot.rotation.y += 0.0035;
-  }
   controls.update();
   renderer.render(scene, camera);
 }
