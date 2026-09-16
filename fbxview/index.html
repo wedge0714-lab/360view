@@ -129,6 +129,22 @@
   }
   .axis-row button:hover{ background: rgba(255,255,255,0.14); color: var(--text); }
 
+  #btn-confirm-orientation{
+    width:100%; appearance:none; border:none; cursor:pointer;
+    background: var(--accent); color:#0d1114;
+    font-family:inherit; font-size:12.5px; font-weight:600;
+    padding: 9px 0; border-radius: 7px; margin: 10px 0 6px;
+  }
+  #btn-confirm-orientation:hover{ background: var(--accent-hover); }
+
+  #btn-recalibrate{
+    width:100%; appearance:none; border:none; cursor:pointer;
+    background: transparent; color: var(--text-dim);
+    font-family:inherit; font-size:11px; text-decoration:underline;
+    padding: 4px 0; margin-bottom: 4px;
+  }
+  #btn-recalibrate:hover{ color: var(--text); }
+
   .adjust-divider{ height:1px; background: var(--panel-border); margin: 10px 0; }
 
   .seg-toggle{ display:flex; gap:4px; }
@@ -214,8 +230,8 @@
   <button id="btn-grid" class="active">グリッド</button>
   <button id="btn-wire">ワイヤーフレーム</button>
   <button id="btn-pivot" class="active">ピボット</button>
-  <button id="btn-set-floor">床を設定</button>
-  <button id="btn-walk">ウォークモード</button>
+  <button id="btn-set-floor" style="display:none;">床を設定</button>
+  <button id="btn-walk" style="display:none;">ウォークモード</button>
 </div>
 
 <div id="adjust-panel">
@@ -235,6 +251,8 @@
     <button data-axis="z" data-dir="1">◀</button>
     <button data-axis="z" data-dir="-1">▶</button>
   </div>
+  <button id="btn-confirm-orientation" style="display:none;">この向きで開始 →</button>
+  <button id="btn-recalibrate">向きを再調整</button>
 
   <div class="adjust-divider"></div>
   <div class="adjust-title">表示モード</div>
@@ -304,10 +322,10 @@ import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 
 // ---- config ----
 const MODEL_URL = 'awaji_model-0915.fbx';
-// baked-in starting orientation, so the model opens already straightened
-// instead of needing the ⟲/⟳ buttons every time. If this opens rotated
-// the wrong way, just tell me and I'll flip the sign.
-const INITIAL_YAW_DEG = 90;
+// orientation is no longer guessed — see the calibration flow below, which
+// asks the person to confirm/adjust it visually the first time, then
+// remembers that choice in this browser.
+const ORIENTATION_KEY = 'fbxviewer-orientation-awaji';
 
 // ---- renderer / scene ----
 const wrap = document.getElementById('canvas-wrap');
@@ -429,6 +447,48 @@ let floorPickMode = false;
 const raycaster = new THREE.Raycaster();
 let lastMeshCount = 0;
 let lastInfo = null;
+
+// ---- orientation calibration: instead of guessing a rotation, show only
+// the tilt controls first and let the person confirm the correct
+// orientation visually, then remember that choice for next time ----
+let calibrating = false;
+function loadSavedOrientation() {
+  try {
+    const raw = localStorage.getItem(ORIENTATION_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (err) {
+    console.warn('Could not read saved orientation:', err);
+    return null;
+  }
+}
+function saveOrientation() {
+  try {
+    localStorage.setItem(ORIENTATION_KEY, JSON.stringify({
+      x: pivot.rotation.x, y: pivot.rotation.y, z: pivot.rotation.z,
+    }));
+  } catch (err) {
+    console.warn('Could not save orientation:', err);
+  }
+}
+function setSecondaryPanelsVisible(visible) {
+  const display = visible ? '' : 'none';
+  document.getElementById('panel').style.display = display;
+  document.getElementById('scene-panel').style.display = display;
+  document.getElementById('hint').style.display = display;
+  document.getElementById('brand').style.display = display;
+}
+function enterCalibrationMode() {
+  calibrating = true;
+  setSecondaryPanelsVisible(false);
+  document.getElementById('btn-confirm-orientation').style.display = '';
+}
+function confirmCalibration() {
+  calibrating = false;
+  saveOrientation();
+  setSecondaryPanelsVisible(true);
+  document.getElementById('btn-confirm-orientation').style.display = 'none';
+  frameToView('front');
+}
 
 // ---- walk mode (first-person, fixed eye height, like SketchUp's Walk tool) ----
 const EYE_HEIGHT = 1600; // in the model's own units, above the floor
@@ -553,7 +613,10 @@ loader.load(
       pivot = new THREE.Group();
       pivot.position.copy(rawCenter);
       pivot.add(object);
-      pivot.rotation.y = THREE.MathUtils.degToRad(INITIAL_YAW_DEG);
+      const savedOrientation = loadSavedOrientation();
+      if (savedOrientation) {
+        pivot.rotation.set(savedOrientation.x, savedOrientation.y, savedOrientation.z);
+      }
       scene.add(pivot);
 
       info = setupSceneScale(pivot);
@@ -567,6 +630,8 @@ loader.load(
       }
 
       frameToView('front');
+
+      if (!savedOrientation) enterCalibrationMode();
     } catch (err) {
       console.warn('Framing/pivot setup error:', err);
     }
@@ -841,6 +906,9 @@ document.querySelectorAll('.axis-row button').forEach((btn) => {
     pivot.rotation[axis] += STRAIGHTEN_STEP * dir;
   });
 });
+
+document.getElementById('btn-confirm-orientation').addEventListener('click', confirmCalibration);
+document.getElementById('btn-recalibrate').addEventListener('click', enterCalibrationMode);
 
 document.getElementById('btn-pbr').addEventListener('click', () => setRenderMode('pbr'));
 document.getElementById('btn-matcap').addEventListener('click', () => setRenderMode('matcap'));
