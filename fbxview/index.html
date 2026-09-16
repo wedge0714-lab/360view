@@ -367,15 +367,22 @@ controls.minDistance = 0.1;
 controls.maxDistance = 5000;
 
 // ---- lighting ----
-const hemi = new THREE.HemisphereLight(0xdfe8f0, 0x1a1d20, 1.3);
+const hemi = new THREE.HemisphereLight(0xdfe8f0, 0x2a2e35, 1.3);
 scene.add(hemi);
+
+// A flat, direction-independent fill — guarantees no face goes fully black
+// no matter which way it's turned (concave surfaces like the underside of
+// a curved canopy naturally fall outside a single directional light's
+// reach, whichever direction it points).
+const ambient = new THREE.AmbientLight(0xffffff, 0.7);
+scene.add(ambient);
 
 // The key light used to sit at a fixed world position, so however the
 // model happened to be rotated, some faces could end up lit only by the
 // weak fill light and look almost black. Attaching it to the camera (like
 // a headlamp) means whatever's currently in view is always lit from the
 // viewer's own direction, regardless of model orientation.
-const key = new THREE.DirectionalLight(0xffffff, 1.6);
+const key = new THREE.DirectionalLight(0xffffff, 1.3);
 key.position.set(0, 0, 0);
 const keyTarget = new THREE.Object3D();
 keyTarget.position.set(0, 0, -1);
@@ -384,9 +391,22 @@ key.target = keyTarget;
 camera.add(key);
 scene.add(camera);
 
-const fill = new THREE.DirectionalLight(0xaecdf0, 0.5);
+const fill = new THREE.DirectionalLight(0xaecdf0, 0.6);
 fill.position.set(-60, 20, -40);
 scene.add(fill);
+
+// The camera headlight is roughly horizontal, so floors and ceilings — with
+// mostly vertical normals — barely catch any of it (light hitting a
+// surface edge-on contributes almost nothing). A soft light shining
+// straight down, fixed in world space, specifically catches upward-facing
+// surfaces like the floor no matter which way the camera is looking.
+const overhead = new THREE.DirectionalLight(0xffffff, 0.7);
+overhead.position.set(0, 100, 0);
+const overheadTarget = new THREE.Object3D();
+overheadTarget.position.set(0, 0, 0);
+scene.add(overheadTarget);
+overhead.target = overheadTarget;
+scene.add(overhead);
 
 // ---- ground grid ----
 let grid = new THREE.GridHelper(100, 40, 0x6a6f76, 0x45484d);
