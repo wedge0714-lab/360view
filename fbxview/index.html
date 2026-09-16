@@ -206,6 +206,7 @@
 <div id="panel">
   <button id="btn-reset">視点リセット</button>
   <button id="btn-front">正面</button>
+  <button id="btn-back">背面</button>
   <button id="btn-top">上面</button>
   <button id="btn-bottom">下面</button>
   <button id="btn-left">左面</button>
@@ -641,15 +642,34 @@ function frameToView(mode) {
 
   let pos;
 
+  // The model's long side isn't guaranteed to line up with world X or Z —
+  // it depends on how it was rotated (including our own baked starting
+  // rotation). Pick "front/back" to always look across the long horizontal
+  // dimension (so you see the broad elevation, not the narrow end), and
+  // "left/right" to look along it — whichever world axis that turns out
+  // to be, rather than assuming it's always Z.
+  const longIsX = size.x >= size.z;
+
   switch (mode) {
     case 'front':
-      pos = new THREE.Vector3(center.x, center.y, center.z + fitDist);
+      pos = longIsX
+        ? new THREE.Vector3(center.x, center.y, center.z + fitDist)
+        : new THREE.Vector3(center.x + fitDist, center.y, center.z);
+      break;
+    case 'back':
+      pos = longIsX
+        ? new THREE.Vector3(center.x, center.y, center.z - fitDist)
+        : new THREE.Vector3(center.x - fitDist, center.y, center.z);
       break;
     case 'right':
-      pos = new THREE.Vector3(center.x + fitDist, center.y, center.z);
+      pos = longIsX
+        ? new THREE.Vector3(center.x + fitDist, center.y, center.z)
+        : new THREE.Vector3(center.x, center.y, center.z + fitDist);
       break;
     case 'left':
-      pos = new THREE.Vector3(center.x - fitDist, center.y, center.z);
+      pos = longIsX
+        ? new THREE.Vector3(center.x - fitDist, center.y, center.z)
+        : new THREE.Vector3(center.x, center.y, center.z - fitDist);
       break;
     case 'top':
       // OrbitControls fixes its internal up-vector basis once, at
@@ -678,6 +698,7 @@ function frameToView(mode) {
 // ---- UI ----
 document.getElementById('btn-reset').addEventListener('click', () => frameToView('front'));
 document.getElementById('btn-front').addEventListener('click', () => frameToView('front'));
+document.getElementById('btn-back').addEventListener('click', () => frameToView('back'));
 document.getElementById('btn-top').addEventListener('click', () => frameToView('top'));
 document.getElementById('btn-bottom').addEventListener('click', () => frameToView('bottom'));
 document.getElementById('btn-left').addEventListener('click', () => frameToView('left'));
@@ -732,6 +753,7 @@ renderer.domElement.addEventListener('click', (e) => {
   if (hits.length > 0) {
     floorY = hits[0].point.y;
     floorIsManual = true;
+    grid.position.y = floorY;
     updateDebugText();
   }
   disarmFloorPick();
