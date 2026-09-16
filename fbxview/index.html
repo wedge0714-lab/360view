@@ -149,6 +149,52 @@
     width: 32px; height: 22px; padding:0; border:none; border-radius:5px;
     background: none; cursor:pointer;
   }
+
+  #scene-panel{
+    position:fixed; bottom:70px; right:20px;
+    width: 190px; max-height: 280px;
+    display:flex; flex-direction:column;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 12px;
+    backdrop-filter: blur(10px);
+    font-size: 11.5px;
+    color: var(--text-dim);
+  }
+  .scene-add-row{ display:flex; gap:6px; margin-bottom:8px; }
+  #scene-name-input{
+    flex:1; min-width:0;
+    background: rgba(255,255,255,0.06);
+    border:none; border-radius:6px;
+    color: var(--text); font-family:inherit; font-size:12px;
+    padding:6px 8px;
+  }
+  #scene-name-input::placeholder{ color: var(--text-dim); }
+  #btn-scene-save{
+    appearance:none; border:none; cursor:pointer;
+    background: var(--accent); color:#0d1114;
+    font-family:inherit; font-size:15px; font-weight:600;
+    width:28px; border-radius:6px;
+  }
+  #scene-list{ overflow-y:auto; }
+  #scene-list:empty::after{
+    content: "保存したシーンはありません"; color: var(--text-dim); font-size:11px;
+  }
+  .scene-row{ display:flex; align-items:center; gap:4px; margin-bottom:4px; }
+  .scene-goto{
+    flex:1; min-width:0; text-align:left; appearance:none; border:none; cursor:pointer;
+    background: rgba(255,255,255,0.06); color: var(--text);
+    font-family:inherit; font-size:12px; padding:6px 8px; border-radius:6px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .scene-goto:hover{ background: rgba(255,255,255,0.14); }
+  .scene-delete{
+    appearance:none; border:none; cursor:pointer; flex-shrink:0;
+    background: rgba(255,255,255,0.06); color: var(--text-dim);
+    font-family:inherit; font-size:13px; width:24px; height:26px; border-radius:6px;
+  }
+  .scene-delete:hover{ background:#a33d3d; color:#fff; }
 </style>
 </head>
 <body>
@@ -167,6 +213,7 @@
   <button id="btn-grid" class="active">グリッド</button>
   <button id="btn-wire">ワイヤーフレーム</button>
   <button id="btn-pivot" class="active">ピボット</button>
+  <button id="btn-set-floor">床を設定</button>
   <button id="btn-walk">ウォークモード</button>
 </div>
 
@@ -216,6 +263,15 @@
 
 <div id="hint">ドラッグ: 回転　スクロール: ズーム　右ドラッグ: 平行移動</div>
 
+<div id="scene-panel">
+  <div class="adjust-title">シーン</div>
+  <div class="scene-add-row">
+    <input id="scene-name-input" type="text" placeholder="シーン名" maxlength="30">
+    <button id="btn-scene-save">＋</button>
+  </div>
+  <div id="scene-list"></div>
+</div>
+
 <a id="brand" href="https://www.kewbu.com/" target="_blank" rel="noopener">KEWBU.Inc</a>
 
 <div id="debug"></div>
@@ -247,6 +303,10 @@ import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 
 // ---- config ----
 const MODEL_URL = 'awaji_model-0915.fbx';
+// baked-in starting orientation, so the model opens already straightened
+// instead of needing the ⟲/⟳ buttons every time. If this opens rotated
+// the wrong way, just tell me and I'll flip the sign.
+const INITIAL_YAW_DEG = 90;
 
 // ---- renderer / scene ----
 const wrap = document.getElementById('canvas-wrap');
@@ -357,6 +417,17 @@ let modelRoot = null;
 let pivot = null;
 let wireframeOn = false;
 let floorY = 0;
+let floorIsManual = false;
+let pickableMeshes = [];
+
+// ---- floor picking: click a face to use its height as the walk-mode floor,
+// instead of always using the model's overall lowest point (which is wrong
+// for models where the ground floor isn't the lowest geometry — a canopy
+// or roof overhang below floor level, for example) ----
+let floorPickMode = false;
+const raycaster = new THREE.Raycaster();
+let lastMeshCount = 0;
+let lastInfo = null;
 
 // ---- walk mode (first-person, fixed eye height, like SketchUp's Walk tool) ----
 const EYE_HEIGHT = 1600; // in the model's own units, above the floor
@@ -372,6 +443,19 @@ const clock = new THREE.Clock();
 const hintEl = document.getElementById('hint');
 const DEFAULT_HINT = 'ドラッグ: 回転　スクロール: ズーム　右ドラッグ: 平行移動';
 const WALK_HINT = 'WASD / 矢印キー: 移動　マウス: 視点　Escで解除';
+
+function updateDebugText() {
+  const info = lastInfo;
+  const meshCount = lastMeshCount;
+  document.getElementById('debug').textContent =
+    `メッシュ数: ${meshCount}\n` +
+    (info
+      ? `サイズ: ${info.size.x.toFixed(2)} x ${info.size.y.toFixed(2)} x ${info.size.z.toFixed(2)}\n` +
+        `中心: (${info.center.x.toFixed(2)}, ${info.center.y.toFixed(2)}, ${info.center.z.toFixed(2)})\n`
+      : `境界ボックス: 計算できませんでした\n`) +
+    `床の高さ(Y): ${floorY.toFixed(2)}${floorIsManual ? '(手動設定)' : ''}` +
+    (meshCount === 0 ? `\n※ジオメトリが1つも見つかりませんでした` : '');
+}
 
 // ---- load ----
 const loadingEl = document.getElementById('loading');
@@ -401,6 +485,7 @@ loader.load(
         if (child.isMesh) meshList.push(child);
       });
       meshCount = meshList.length;
+      pickableMeshes = meshList;
 
       meshList.forEach((child) => {
         child.castShadow = false;
@@ -467,6 +552,7 @@ loader.load(
       pivot = new THREE.Group();
       pivot.position.copy(rawCenter);
       pivot.add(object);
+      pivot.rotation.y = THREE.MathUtils.degToRad(INITIAL_YAW_DEG);
       scene.add(pivot);
 
       info = setupSceneScale(pivot);
@@ -484,13 +570,9 @@ loader.load(
       console.warn('Framing/pivot setup error:', err);
     }
 
-    debugEl.textContent =
-      `メッシュ数: ${meshCount}\n` +
-      (info
-        ? `サイズ: ${info.size.x.toFixed(2)} x ${info.size.y.toFixed(2)} x ${info.size.z.toFixed(2)}\n` +
-          `中心: (${info.center.x.toFixed(2)}, ${info.center.y.toFixed(2)}, ${info.center.z.toFixed(2)})`
-        : `境界ボックス: 計算できませんでした`) +
-      (meshCount === 0 ? `\n※ジオメトリが1つも見つかりませんでした` : '');
+    lastMeshCount = meshCount;
+    lastInfo = info;
+    updateDebugText();
 
     loadingEl.classList.add('hidden');
     setTimeout(() => { loadingEl.style.display = 'none'; }, 400);
@@ -539,7 +621,7 @@ function setupSceneScale(object) {
   grid.position.y = box.min.y;
   scene.add(grid);
 
-  floorY = box.min.y;
+  if (!floorIsManual) floorY = box.min.y;
   pivotMarker.scale.setScalar(maxDim * 0.06);
 
   return { box, size, center, maxDim };
@@ -615,6 +697,48 @@ document.getElementById('btn-wire').addEventListener('click', (e) => {
 document.getElementById('btn-pivot').addEventListener('click', (e) => {
   pivotMarker.visible = !pivotMarker.visible;
   e.target.classList.toggle('active', pivotMarker.visible);
+});
+
+// ---- floor picking ----
+function armFloorPick() {
+  if (!pivot || floorPickMode) return;
+  floorPickMode = true;
+  controls.enabled = false;
+  document.getElementById('btn-set-floor').classList.add('active');
+  hintEl.textContent = '床にしたい面をクリックしてください(Escでキャンセル)';
+}
+
+function disarmFloorPick() {
+  floorPickMode = false;
+  controls.enabled = true;
+  document.getElementById('btn-set-floor').classList.remove('active');
+  hintEl.textContent = walkMode ? WALK_HINT : DEFAULT_HINT;
+}
+
+document.getElementById('btn-set-floor').addEventListener('click', () => {
+  if (floorPickMode) disarmFloorPick();
+  else armFloorPick();
+});
+
+renderer.domElement.addEventListener('click', (e) => {
+  if (!floorPickMode) return;
+  const rect = renderer.domElement.getBoundingClientRect();
+  const ndc = new THREE.Vector2(
+    ((e.clientX - rect.left) / rect.width) * 2 - 1,
+    -((e.clientY - rect.top) / rect.height) * 2 + 1
+  );
+  raycaster.setFromCamera(ndc, camera);
+  const hits = raycaster.intersectObjects(pickableMeshes, false);
+  if (hits.length > 0) {
+    floorY = hits[0].point.y;
+    floorIsManual = true;
+    updateDebugText();
+  }
+  disarmFloorPick();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (floorPickMode && e.key === 'Escape') disarmFloorPick();
 });
 
 // ---- walk mode ----
@@ -718,6 +842,93 @@ document.getElementById('wire-width').addEventListener('input', (e) => {
   wireMaterial.linewidth = val;
   wireWidthValue.textContent = val + 'px';
 });
+
+// ---- scenes: save/recall favorite camera views, like SketchUp's Scenes.
+// Kept in this browser's localStorage, so they persist between visits on
+// this device (they won't be visible to someone opening the page on a
+// different computer). ----
+const SCENES_KEY = 'fbxviewer-scenes-awaji';
+function loadScenes() {
+  try {
+    const raw = localStorage.getItem(SCENES_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (err) {
+    console.warn('Could not read saved scenes:', err);
+    return [];
+  }
+}
+function persistScenes() {
+  try {
+    localStorage.setItem(SCENES_KEY, JSON.stringify(scenes));
+  } catch (err) {
+    console.warn('Could not save scenes:', err);
+  }
+}
+
+let scenes = loadScenes();
+const sceneListEl = document.getElementById('scene-list');
+
+function renderSceneList() {
+  sceneListEl.innerHTML = '';
+  scenes.forEach((s, i) => {
+    const row = document.createElement('div');
+    row.className = 'scene-row';
+
+    const goBtn = document.createElement('button');
+    goBtn.className = 'scene-goto';
+    goBtn.textContent = s.name;
+    goBtn.title = s.name;
+    goBtn.addEventListener('click', () => goToScene(i));
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'scene-delete';
+    delBtn.textContent = '×';
+    delBtn.title = '削除';
+    delBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      scenes.splice(i, 1);
+      persistScenes();
+      renderSceneList();
+    });
+
+    row.appendChild(goBtn);
+    row.appendChild(delBtn);
+    sceneListEl.appendChild(row);
+  });
+}
+
+function goToScene(i) {
+  const s = scenes[i];
+  if (!s) return;
+  if (walkMode) exitWalkMode();
+  camera.position.set(s.pos[0], s.pos[1], s.pos[2]);
+  controls.target.set(s.target[0], s.target[1], s.target[2]);
+  camera.fov = s.fov;
+  camera.updateProjectionMatrix();
+  fovSlider.value = s.fov;
+  fovValue.textContent = Math.round(s.fov) + '°';
+  controls.update();
+}
+
+const sceneNameInput = document.getElementById('scene-name-input');
+document.getElementById('btn-scene-save').addEventListener('click', () => {
+  if (walkMode) exitWalkMode();
+  const name = sceneNameInput.value.trim() || `シーン ${scenes.length + 1}`;
+  scenes.push({
+    name,
+    pos: [camera.position.x, camera.position.y, camera.position.z],
+    target: [controls.target.x, controls.target.y, controls.target.z],
+    fov: camera.fov,
+  });
+  persistScenes();
+  renderSceneList();
+  sceneNameInput.value = '';
+});
+sceneNameInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('btn-scene-save').click();
+});
+
+renderSceneList();
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
