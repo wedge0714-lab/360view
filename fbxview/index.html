@@ -457,6 +457,31 @@ const wireMaterial = new LineMaterial({ color: 0xff5555, linewidth: 1, transpare
 wireMaterial.resolution.set(window.innerWidth, window.innerHeight);
 const wireOverlays = [];
 
+// FBX files sometimes reference textures as separate image files rather
+// than embedding them. If those files weren't uploaded alongside the .fbx,
+// the browser's fetch for them 404s and the texture never resolves —
+// leaving the material to multiply its color by nothing, i.e. solid black,
+// even though the material's own base color is fine. Detect that and drop
+// the broken map so the flat color shows instead.
+function handleTextureLoadFailure(material, mapProp) {
+  const tex = material[mapProp];
+  if (!tex || !tex.image) return;
+  const img = tex.image;
+  if (typeof img.addEventListener !== 'function') return; // not an <img>-backed texture
+
+  const dropMap = () => {
+    material[mapProp] = null;
+    material.needsUpdate = true;
+  };
+
+  if (img.complete) {
+    if (img.naturalWidth === 0) dropMap();
+    return;
+  }
+  img.addEventListener('load', () => { if (img.naturalWidth === 0) dropMap(); });
+  img.addEventListener('error', dropMap);
+}
+
 function setRenderMode(mode) {
   if (!modelRoot) return;
   modelRoot.traverse((child) => {
@@ -603,6 +628,8 @@ loader.load(
             mats.forEach((m) => {
               if (m.map) m.map.colorSpace = THREE.SRGBColorSpace;
               if (m.emissiveMap) m.emissiveMap.colorSpace = THREE.SRGBColorSpace;
+              handleTextureLoadFailure(m, 'map');
+              handleTextureLoadFailure(m, 'emissiveMap');
               m.side = THREE.DoubleSide;
               // FBXLoader's classic Lambert/Phong → PBR conversion often
               // leaves metalness near 1 with no metalnessMap, which turns
@@ -645,16 +672,23 @@ loader.load(
       console.warn('Mesh traversal error (continuing with what loaded):', err);
     }
 
-    // quick diagnostic — if colors still look wrong, this shows what the
-    // materials actually parsed as, so it's not just guesswork next time
-    if (pickableMeshes.length > 0 && pickableMeshes[0].material) {
-      const sampleMats = Array.isArray(pickableMeshes[0].material) ? pickableMeshes[0].material : [pickableMeshes[0].material];
-      console.log('Sample material(s) after load:', sampleMats.map((m) => ({
-        name: m.name, color: m.color ? '#' + m.color.getHexString() : null,
-        metalness: m.metalness, roughness: m.roughness,
-        hasMap: !!m.map, hasMetalnessMap: !!m.metalnessMap, hasRoughnessMap: !!m.roughnessMap,
-      })));
-    }
+    // quick diagnostic — if colors still look wrong, this shows what every
+    // distinct material actually parsed as, so it's not just guesswork
+    const seenMatNames = new Set();
+    const materialSamples = [];
+    pickableMeshes.forEach((mesh) => {
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      mats.forEach((m) => {
+        if (!m || seenMatNames.has(m.uuid)) return;
+        seenMatNames.add(m.uuid);
+        materialSamples.push({
+          name: m.name, color: m.color ? '#' + m.color.getHexString() : null,
+          metalness: m.metalness, roughness: m.roughness,
+          hasMap: !!m.map, mapLoaded: m.map ? (m.map.image ? m.map.image.naturalWidth !== 0 : 'no image object') : null,
+        });
+      });
+    });
+    console.log(`All ${materialSamples.length} distinct material(s) after load:`, materialSamples);
 
     scene.add(object);
 
