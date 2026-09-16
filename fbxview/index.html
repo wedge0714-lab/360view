@@ -9,7 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg: #14181c;
+    --bg: #3a3d42;
     --panel: rgba(22, 27, 32, 0.82);
     --panel-border: rgba(255,255,255,0.08);
     --text: #e7e9ea;
@@ -38,7 +38,8 @@
 
   #panel{
     position:fixed; bottom:20px; left:20px;
-    display:flex; gap:6px;
+    display:flex; flex-wrap:wrap; gap:6px;
+    max-width: calc(100vw - 40px);
     background: var(--panel);
     border: 1px solid var(--panel-border);
     border-radius: 10px;
@@ -100,6 +101,49 @@
     white-space: pre; pointer-events:none;
   }
   #debug:empty{ display:none; }
+
+  #adjust-panel{
+    position:fixed; top:56px; left:20px;
+    width: 190px;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 12px;
+    backdrop-filter: blur(10px);
+    font-size: 11.5px;
+    color: var(--text-dim);
+  }
+  .adjust-title{
+    font-size: 11px; font-weight: 500; letter-spacing: 0.04em;
+    color: var(--text-dim); margin-bottom: 8px;
+  }
+  .axis-row{
+    display:flex; align-items:center; gap:6px; margin-bottom:6px;
+  }
+  .axis-row span{ width: 12px; color: var(--text); font-weight:600; }
+  .axis-row button{
+    flex:1; appearance:none; border:none; cursor:pointer;
+    background: rgba(255,255,255,0.06); color: var(--text-dim);
+    font-family: inherit; font-size: 13px; padding: 5px 0; border-radius: 6px;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  .axis-row button:hover{ background: rgba(255,255,255,0.14); color: var(--text); }
+
+  .adjust-divider{ height:1px; background: var(--panel-border); margin: 10px 0; }
+
+  .seg-toggle{ display:flex; gap:4px; }
+  .seg-toggle button{
+    flex:1; appearance:none; border:none; cursor:pointer;
+    background: rgba(255,255,255,0.06); color: var(--text-dim);
+    font-family: inherit; font-size: 12px; font-weight:500;
+    padding: 7px 0; border-radius: 6px;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  .seg-toggle button.active{ background: var(--accent); color: #0d1114; }
+
+  .fov-row{ display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
+  .fov-row span{ color: var(--text); }
+  #fov-slider{ width:100%; accent-color: var(--accent); }
 </style>
 </head>
 <body>
@@ -112,12 +156,45 @@
   <button id="btn-reset">視点リセット</button>
   <button id="btn-front">正面</button>
   <button id="btn-top">上面</button>
-  <button id="btn-side">側面</button>
+  <button id="btn-bottom">下面</button>
+  <button id="btn-left">左面</button>
+  <button id="btn-right">右面</button>
   <button id="btn-grid" class="active">グリッド</button>
   <button id="btn-wire">ワイヤーフレーム</button>
-  <button id="btn-rotate">自動回転</button>
-  <button id="btn-spin-l">モデル回転 ⟲</button>
-  <button id="btn-spin-r">モデル回転 ⟳</button>
+  <button id="btn-pivot" class="active">ピボット</button>
+</div>
+
+<div id="adjust-panel">
+  <div class="adjust-title">モデルの傾き調整</div>
+  <div class="axis-row">
+    <span>X</span>
+    <button data-axis="x" data-dir="1">◀</button>
+    <button data-axis="x" data-dir="-1">▶</button>
+  </div>
+  <div class="axis-row">
+    <span>Y</span>
+    <button data-axis="y" data-dir="1">◀</button>
+    <button data-axis="y" data-dir="-1">▶</button>
+  </div>
+  <div class="axis-row">
+    <span>Z</span>
+    <button data-axis="z" data-dir="1">◀</button>
+    <button data-axis="z" data-dir="-1">▶</button>
+  </div>
+
+  <div class="adjust-divider"></div>
+  <div class="adjust-title">表示モード</div>
+  <div class="seg-toggle">
+    <button id="btn-pbr" class="active">PBR</button>
+    <button id="btn-matcap">Matcap</button>
+  </div>
+
+  <div class="adjust-divider"></div>
+  <div class="fov-row">
+    <span class="adjust-title" style="margin-bottom:0;">画角</span>
+    <span id="fov-value">45°</span>
+  </div>
+  <input id="fov-slider" type="range" min="15" max="100" value="45" step="1">
 </div>
 
 <div id="hint">ドラッグ: 回転　スクロール: ズーム　右ドラッグ: 平行移動</div>
@@ -162,8 +239,8 @@ renderer.toneMappingExposure = 1.05;
 wrap.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x14181c);
-scene.fog = new THREE.Fog(0x14181c, 50, 400);
+scene.background = new THREE.Color(0x3a3d42);
+scene.fog = new THREE.Fog(0x3a3d42, 50, 400);
 
 // PBR-style materials (metalness/roughness workflow) need an environment map
 // to reflect, otherwise they render near-black under only direct lights.
@@ -178,7 +255,6 @@ controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 controls.minDistance = 0.1;
 controls.maxDistance = 5000;
-controls.autoRotateSpeed = 1.2;
 
 // ---- lighting ----
 const hemi = new THREE.HemisphereLight(0xdfe8f0, 0x1a1d20, 1.1);
@@ -193,8 +269,54 @@ fill.position.set(-60, 20, -40);
 scene.add(fill);
 
 // ---- ground grid ----
-let grid = new THREE.GridHelper(100, 40, 0x3a4148, 0x24282d);
+let grid = new THREE.GridHelper(100, 40, 0x6a6f76, 0x45484d);
 scene.add(grid);
+
+// ---- pivot marker: shows exactly where the camera orbits around, so
+// dragging never feels like it's spinning around an invisible point ----
+const pivotMarker = new THREE.AxesHelper(1);
+pivotMarker.material.depthTest = false;
+pivotMarker.material.transparent = true;
+pivotMarker.renderOrder = 999;
+scene.add(pivotMarker);
+
+// ---- matcap renderer mode: a flat, lighting-independent clay look for
+// judging pure shape, same idea as Sketchfab's PBR/Matcap toggle ----
+function createMatcapTexture() {
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  const grad = ctx.createRadialGradient(size * 0.35, size * 0.32, size * 0.02, size * 0.5, size * 0.5, size * 0.62);
+  grad.addColorStop(0, '#f4f4f4');
+  grad.addColorStop(0.35, '#cfcfcf');
+  grad.addColorStop(0.7, '#8d8d8d');
+  grad.addColorStop(1, '#4c4c4c');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+  ctx.fill();
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+const matcapMaterial = new THREE.MeshMatcapMaterial({ matcap: createMatcapTexture(), side: THREE.DoubleSide });
+
+function setRenderMode(mode) {
+  if (!modelRoot) return;
+  modelRoot.traverse((child) => {
+    if (!child.isMesh) return;
+    if (mode === 'matcap') {
+      if (!child.userData._origMaterial) child.userData._origMaterial = child.material;
+      child.material = matcapMaterial;
+    } else if (child.userData._origMaterial) {
+      child.material = child.userData._origMaterial;
+    }
+  });
+  document.getElementById('btn-pbr').classList.toggle('active', mode === 'pbr');
+  document.getElementById('btn-matcap').classList.toggle('active', mode === 'matcap');
+}
 
 // ---- state ----
 let modelRoot = null;
@@ -270,7 +392,7 @@ loader.load(
         : `境界ボックス: 計算できませんでした`) +
       (meshCount === 0 ? `\n※ジオメトリが1つも見つかりませんでした` : '');
 
-    frameToView('iso');
+    frameToView('front');
 
     loadingEl.classList.add('hidden');
     setTimeout(() => { loadingEl.style.display = 'none'; }, 400);
@@ -315,9 +437,11 @@ function setupSceneScale(object) {
 
   scene.remove(grid);
   const gridSize = Math.max(maxDim * 2, 10);
-  grid = new THREE.GridHelper(gridSize, 40, 0x3a4148, 0x24282d);
+  grid = new THREE.GridHelper(gridSize, 40, 0x6a6f76, 0x45484d);
   grid.position.y = box.min.y;
   scene.add(grid);
+
+  pivotMarker.scale.setScalar(maxDim * 0.06);
 
   return { box, size, center, maxDim };
 }
@@ -340,8 +464,11 @@ function frameToView(mode) {
     case 'front':
       pos = new THREE.Vector3(center.x, center.y, center.z + fitDist);
       break;
-    case 'side':
+    case 'right':
       pos = new THREE.Vector3(center.x + fitDist, center.y, center.z);
+      break;
+    case 'left':
+      pos = new THREE.Vector3(center.x - fitDist, center.y, center.z);
       break;
     case 'top':
       // OrbitControls fixes its internal up-vector basis once, at
@@ -351,9 +478,14 @@ function frameToView(mode) {
       // (so dragging keeps working afterwards) while avoiding that case.
       pos = new THREE.Vector3(center.x + fitDist * 0.001, center.y + fitDist, center.z);
       break;
+    case 'bottom':
+      pos = new THREE.Vector3(center.x + fitDist * 0.001, center.y - fitDist, center.z);
+      break;
     case 'iso':
-    default:
       pos = new THREE.Vector3(center.x + fitDist * 0.6, center.y + fitDist * 0.45, center.z + fitDist * 0.6);
+      break;
+    default:
+      pos = new THREE.Vector3(center.x, center.y, center.z + fitDist);
       break;
   }
 
@@ -363,10 +495,12 @@ function frameToView(mode) {
 }
 
 // ---- UI ----
-document.getElementById('btn-reset').addEventListener('click', () => frameToView('iso'));
+document.getElementById('btn-reset').addEventListener('click', () => frameToView('front'));
 document.getElementById('btn-front').addEventListener('click', () => frameToView('front'));
 document.getElementById('btn-top').addEventListener('click', () => frameToView('top'));
-document.getElementById('btn-side').addEventListener('click', () => frameToView('side'));
+document.getElementById('btn-bottom').addEventListener('click', () => frameToView('bottom'));
+document.getElementById('btn-left').addEventListener('click', () => frameToView('left'));
+document.getElementById('btn-right').addEventListener('click', () => frameToView('right'));
 
 document.getElementById('btn-grid').addEventListener('click', (e) => {
   grid.visible = !grid.visible;
@@ -386,17 +520,33 @@ document.getElementById('btn-wire').addEventListener('click', (e) => {
   }
 });
 
-document.getElementById('btn-rotate').addEventListener('click', (e) => {
-  controls.autoRotate = !controls.autoRotate;
-  e.target.classList.toggle('active', controls.autoRotate);
+document.getElementById('btn-pivot').addEventListener('click', (e) => {
+  pivotMarker.visible = !pivotMarker.visible;
+  e.target.classList.toggle('active', pivotMarker.visible);
 });
 
-document.getElementById('btn-spin-l').addEventListener('click', () => {
-  if (pivot) pivot.rotation.y += Math.PI / 2;
+// straighten model: small nudges per axis, same idea as Sketchfab's
+// "Straighten model" X/Y/Z arrows
+const STRAIGHTEN_STEP = THREE.MathUtils.degToRad(5);
+document.querySelectorAll('.axis-row button').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    if (!pivot) return;
+    const axis = btn.dataset.axis;
+    const dir = parseFloat(btn.dataset.dir);
+    pivot.rotation[axis] += STRAIGHTEN_STEP * dir;
+  });
 });
 
-document.getElementById('btn-spin-r').addEventListener('click', () => {
-  if (pivot) pivot.rotation.y -= Math.PI / 2;
+document.getElementById('btn-pbr').addEventListener('click', () => setRenderMode('pbr'));
+document.getElementById('btn-matcap').addEventListener('click', () => setRenderMode('matcap'));
+
+const fovSlider = document.getElementById('fov-slider');
+const fovValue = document.getElementById('fov-value');
+fovSlider.addEventListener('input', (e) => {
+  const val = parseFloat(e.target.value);
+  camera.fov = val;
+  camera.updateProjectionMatrix();
+  fovValue.textContent = val + '°';
 });
 
 window.addEventListener('resize', () => {
@@ -408,6 +558,7 @@ window.addEventListener('resize', () => {
 // ---- render loop ----
 function animate() {
   requestAnimationFrame(animate);
+  pivotMarker.position.copy(controls.target);
   controls.update();
   renderer.render(scene, camera);
 }
