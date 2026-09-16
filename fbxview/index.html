@@ -167,6 +167,7 @@
   <button id="btn-grid" class="active">グリッド</button>
   <button id="btn-wire">ワイヤーフレーム</button>
   <button id="btn-pivot" class="active">ピボット</button>
+  <button id="btn-walk">ウォークモード</button>
 </div>
 
 <div id="adjust-panel">
@@ -208,9 +209,9 @@
   </div>
   <div class="fov-row">
     <span>太さ</span>
-    <span id="wire-width-value">2px</span>
+    <span id="wire-width-value">1px</span>
   </div>
-  <input id="wire-width" type="range" min="1" max="6" value="2" step="0.5">
+  <input id="wire-width" type="range" min="0.3" max="2.5" value="1" step="0.1">
 </div>
 
 <div id="hint">ドラッグ: 回転　スクロール: ズーム　右ドラッグ: 平行移動</div>
@@ -332,7 +333,7 @@ const matcapMaterial = new THREE.MeshMatcapMaterial({
 // solid surface, rather than switching material.wireframe (which hides the
 // shaded faces entirely). One shared material means the color/width
 // controls update every mesh's overlay at once. ----
-const wireMaterial = new LineMaterial({ color: 0xff5555, linewidth: 2, transparent: true });
+const wireMaterial = new LineMaterial({ color: 0xff5555, linewidth: 1, transparent: true });
 wireMaterial.resolution.set(window.innerWidth, window.innerHeight);
 const wireOverlays = [];
 
@@ -355,6 +356,22 @@ function setRenderMode(mode) {
 let modelRoot = null;
 let pivot = null;
 let wireframeOn = false;
+let floorY = 0;
+
+// ---- walk mode (first-person, fixed eye height, like SketchUp's Walk tool) ----
+const EYE_HEIGHT = 1600; // in the model's own units, above the floor
+const WALK_SPEED = EYE_HEIGHT; // units per second — a comfortable walking pace
+let walkMode = false;
+let yaw = 0;
+let pitch = 0;
+let moveForward = false;
+let moveBackward = false;
+let moveLeft = false;
+let moveRight = false;
+const clock = new THREE.Clock();
+const hintEl = document.getElementById('hint');
+const DEFAULT_HINT = 'ドラッグ: 回転　スクロール: ズーム　右ドラッグ: 平行移動';
+const WALK_HINT = 'WASD / 矢印キー: 移動　マウス: 視点　Escで解除';
 
 // ---- load ----
 const loadingEl = document.getElementById('loading');
@@ -522,6 +539,7 @@ function setupSceneScale(object) {
   grid.position.y = box.min.y;
   scene.add(grid);
 
+  floorY = box.min.y;
   pivotMarker.scale.setScalar(maxDim * 0.06);
 
   return { box, size, center, maxDim };
@@ -599,6 +617,73 @@ document.getElementById('btn-pivot').addEventListener('click', (e) => {
   e.target.classList.toggle('active', pivotMarker.visible);
 });
 
+// ---- walk mode ----
+function enterWalkMode() {
+  if (!pivot || walkMode) return;
+  walkMode = true;
+  controls.enabled = false;
+
+  // pick up the current look direction so entering walk mode doesn't
+  // snap the view to a different angle
+  const euler = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
+  yaw = euler.y;
+  pitch = euler.x;
+  camera.rotation.order = 'YXZ';
+  camera.position.y = floorY + EYE_HEIGHT;
+
+  hintEl.textContent = WALK_HINT;
+  document.getElementById('btn-walk').classList.add('active');
+  renderer.domElement.requestPointerLock();
+}
+
+function exitWalkMode() {
+  if (!walkMode) return;
+  walkMode = false;
+  document.getElementById('btn-walk').classList.remove('active');
+  hintEl.textContent = DEFAULT_HINT;
+
+  // hand back to OrbitControls, aiming where the walk view was looking
+  const forward = new THREE.Vector3();
+  camera.getWorldDirection(forward);
+  controls.target.copy(camera.position).addScaledVector(forward, EYE_HEIGHT * 5);
+  controls.enabled = true;
+  controls.update();
+
+  if (document.pointerLockElement === renderer.domElement) document.exitPointerLock();
+}
+
+document.getElementById('btn-walk').addEventListener('click', () => {
+  if (walkMode) exitWalkMode();
+  else enterWalkMode();
+});
+
+document.addEventListener('pointerlockchange', () => {
+  // the browser always allows Escape to break pointer lock — treat losing
+  // lock as the signal to leave walk mode, whatever caused it
+  if (walkMode && document.pointerLockElement !== renderer.domElement) exitWalkMode();
+});
+
+document.addEventListener('mousemove', (e) => {
+  if (!walkMode || document.pointerLockElement !== renderer.domElement) return;
+  const sensitivity = 0.0025;
+  yaw -= e.movementX * sensitivity;
+  pitch -= e.movementY * sensitivity;
+  const limit = Math.PI / 2 - 0.01;
+  pitch = Math.max(-limit, Math.min(limit, pitch));
+  camera.rotation.set(pitch, yaw, 0);
+});
+
+function setMoveFlag(code, value) {
+  switch (code) {
+    case 'KeyW': case 'ArrowUp': moveForward = value; break;
+    case 'KeyS': case 'ArrowDown': moveBackward = value; break;
+    case 'KeyA': case 'ArrowLeft': moveLeft = value; break;
+    case 'KeyD': case 'ArrowRight': moveRight = value; break;
+  }
+}
+document.addEventListener('keydown', (e) => { if (walkMode) setMoveFlag(e.code, true); });
+document.addEventListener('keyup', (e) => { if (walkMode) setMoveFlag(e.code, false); });
+
 // straighten model: small nudges per axis, same idea as Sketchfab's
 // "Straighten model" X/Y/Z arrows
 const STRAIGHTEN_STEP = THREE.MathUtils.degToRad(5);
@@ -644,8 +729,26 @@ window.addEventListener('resize', () => {
 // ---- render loop ----
 function animate() {
   requestAnimationFrame(animate);
-  pivotMarker.position.copy(controls.target);
-  controls.update();
+  const delta = clock.getDelta();
+
+  if (walkMode) {
+    const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+    const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
+    const moveDir = new THREE.Vector3();
+    if (moveForward) moveDir.add(forward);
+    if (moveBackward) moveDir.sub(forward);
+    if (moveRight) moveDir.add(right);
+    if (moveLeft) moveDir.sub(right);
+    if (moveDir.lengthSq() > 0) {
+      moveDir.normalize();
+      camera.position.addScaledVector(moveDir, WALK_SPEED * delta);
+    }
+    camera.position.y = floorY + EYE_HEIGHT; // fixed eye height, always
+  } else {
+    pivotMarker.position.copy(controls.target);
+    controls.update();
+  }
+
   renderer.render(scene, camera);
 }
 animate();
